@@ -1,0 +1,9 @@
+name: r-mcptools
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: r-mcptools
+    command: Rscript
+    args:
+      - -e
+      - mcptools::mcp_server(tools = btw::btw_tools())
