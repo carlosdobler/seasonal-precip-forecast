@@ -216,7 +216,7 @@ fn_plot_maps <- function(
   if (has_clim) {
     d_long$model <- factor(
       d_long$model,
-      levels = c("Climatology", "NMME", "NMME+EMOS")
+      levels = c("NMME", "NMME+EMOS", "Climatology")
     )
   } else {
     d_long$model <- factor(d_long$model, levels = c("NMME", "NMME+EMOS"))
@@ -308,17 +308,15 @@ fn_plot_skill_leads <- function(df, t_mon, metric_name = "Metric") {
       stroke = 1,
       position = position_dodge(width = 0.7)
     ) +
-    scale_color_discrete_qualitative(name = NULL) +
-    scale_fill_discrete_qualitative(name = NULL) +
+    scale_color_discrete_qualitative(name = NULL, nmax = 3) +
+    scale_fill_discrete_qualitative(name = NULL, nmax = 3) +
     labs(x = "Lead Time (months)", y = metric_name) +
     theme(legend.position = "bottom") +
     coord_cartesian(ylim = quantile(d_long$metric, c(0.03, 0.97), na.rm = T))
 }
 ```
 
-## RMSE
-
-Lower is better.
+## RMSE (lower is better)
 
 ``` r
 df_rmse <-
@@ -403,9 +401,7 @@ df_rmse <-
 
 ![](06_evaluate_historical_files/figure-commonmark/unnamed-chunk-25-1.png)
 
-## CCC (Concordance Correlation Coefficient)
-
-Higher is better.
+## CCC (Concordance Correlation Coefficient; higher is better)
 
 ``` r
 df_ccc <-
