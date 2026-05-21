@@ -1,12 +1,5 @@
-#' 02_compute_ensemble_stats.R
-#'
-#' Purpose: Compute per-model ensemble mean and spread (standard deviation) from the aligned NMME data.
-#'
-#' Inputs:
-#' - ex_08_blend/data/nmme_aligned_{model}.rds
-#'
-#' Outputs:
-#' - ex_08_blend/data/nmme_stats_{model}.rds
+#
+# Script to compute per-model ensemble mean and spread (standard deviation) from the aligned NMME data.
 
 source("ex_08_blend/config.R")
 
@@ -21,10 +14,11 @@ for (mod in MODELS) {
     mod
   )
 
-  # Identify the member dimension. Usually it's named "M".
+  # Identify the member dimension
   dim_names <- names(st_dimensions(stars_obj))
   m_dim <- which(dim_names == "M")
 
+  # non-M dimension names
   margin_dims <- setdiff(seq_along(dim_names), m_dim)
 
   # Compute mean and sd
@@ -41,5 +35,3 @@ for (mod in MODELS) {
 
   write_rds(mod_stats, str_glue("{OUTPUT_DIR}/nmme_stats_{mod}.rds"))
 }
-
-message("Step 02 complete!")

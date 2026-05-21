@@ -1,15 +1,8 @@
-#' 00_baseline_stats.R
-#'
-#' Purpose: Generate NetCDFs that contain ensemble stats from all NMME models,
-#' one file per month. Based on all models and all their members, it calculates
-#' the mean, median, and quantiles 0.10, 0.25, 0.75, and 0.90. These files
-#' represent the baseline that the EMOS approach should beat.
-#'
-#' Inputs:
-#' - NMME netcdf files in /mnt/pd-blend/nmme/
-#'
-#' Outputs:
-#' - {OUTPUT_DIR}/baseline/baseline_stats_{YYYY-MM-DD}.nc
+#
+# Script to generate NetCDFs that contain ensemble stats from all NMME models,
+# one file per month. Based on all models and all their members, it calculates
+# the mean, median, and quantiles 0.10, 0.25, 0.75, and 0.90. These files
+# represent the baseline that the EMOS approach should beat.
 
 source("ex_08_blend/config.R")
 source("functions/general_tools.R")
@@ -79,7 +72,8 @@ for (d in dates_to_process) {
         st_as_stars() |>
         aperm(c("X", "Y", "M", "L"))
 
-      # # Handle geoss2s specific dimension as in 01_load_and_align.R
+      # Handle geoss2s specific dimension (only 4 members in some years)
+      # (not needed)
       # if (mod == "nasa-geoss2s") {
       #   r <- r |> slice(M, 1:4)
       # }
@@ -91,6 +85,7 @@ for (d in dates_to_process) {
   combined_stars <- do.call(c, c(res_list, along = "M"))
 
   # # Identify dimensions to apply margins
+  # (not needed: aperm() above ensures dimensions have always the same order)
   # dim_names <- names(st_dimensions(combined_stars))
   # m_dim <- which(dim_names == "M")
   # margin_dims <- setdiff(seq_along(dim_names), m_dim)
@@ -136,5 +131,3 @@ for (d in dates_to_process) {
   ) |>
     system(ignore.stdout = T, ignore.stderr = T)
 }
-
-message("Baseline statistics generation complete!")

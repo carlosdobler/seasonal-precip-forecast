@@ -1,33 +1,26 @@
-#' 03_training.R
-#'
-#' Purpose: Fit EMOS-LASSO models for each grid cell, calendar month, and lead time.
-#'          Uses glmnet directly for LASSO fitting and rsample for leave-one-year-out (LOYO) CV.
-#'
-#' Inputs:
-#' - {OUTPUT_DIR}/nmme_stats_{model}.rds
-#' - {OUTPUT_DIR}/era5_aligned.rds
-#'
-#' Outputs:
-#' - {OUTPUT_DIR}/frozen_model.rds (contains a_array (intercept for means), b_array (weights for means),
-#' c_array (intercept for sd), d_array (weights for sd), lambda_array)
+#
+# Script to fit EMOS-LASSO models for each grid cell, target calendar month, and lead time.
+# Uses glmnet directly for LASSO fitting and rsample for leave-one-year-out (LOYO) CV.
+# Generates frozen parameters (weights) arrays to be applied on new forecast runs
 
 source("ex_08_blend/config.R")
 
 plan(multicore, workers = parallelly::availableCores() - 1)
 
-# Load and merge NMME stats model by model
+# Load and merge NMME stats
 
-df_nmme <- map_dfr(MODELS, \(mod) {
-  message(str_glue("  Loading {mod}..."))
-  mod_stats <- read_rds(str_glue("{OUTPUT_DIR}/nmme_stats_{mod}.rds"))
+df_nmme <-
+  map_dfr(MODELS, \(mod) {
+    message(str_glue("  Loading {mod}..."))
+    mod_stats <- read_rds(str_glue("{OUTPUT_DIR}/nmme_stats_{mod}.rds"))
 
-  df_mod <- as_tibble(mod_stats) |>
-    rename(ic_date = time) |>
-    filter(!is.na(mean)) |>
-    mutate(model = str_replace_all(mod, "-", "_"))
+    df_mod <- as_tibble(mod_stats) |>
+      rename(ic_date = time) |>
+      filter(!is.na(mean)) |>
+      mutate(model = str_replace_all(mod, "-", "_"))
 
-  return(df_mod)
-})
+    return(df_mod)
+  })
 
 df_nmme <-
   pivot_wider(df_nmme, names_from = model, values_from = c(mean, sd))
@@ -67,9 +60,9 @@ gc()
 
 # Tuning stage
 
-message("Defining tuning grid...")
-# grid of 5 lambda values
-lambda_grid <- grid_regular(penalty(range = c(-4, 0)), levels = 5) |>
+# tuning grid of 5 lambda values (lambda parameter: amount of regularization)
+lambda_grid <-
+  grid_regular(penalty(range = c(-4, 0)), levels = 5) |>
   pull(penalty)
 
 mean_vars <- paste0("mean_", str_replace_all(MODELS, "-", "_"))
@@ -103,6 +96,7 @@ fit_glmnet_safe <- function(X, y, lambda, alpha = 1, lower.limits = 0) {
     }
   )
 
+  # convergence failure
   if (!converged || is.null(fit)) {
     fit <- glmnet::glmnet(
       X,
@@ -134,9 +128,11 @@ fit_cell_model <- function(df_subset) {
     ))
   }
 
+  # LOYO CV
+  # Tune lambda using CPRS as loss function
   splits <- loo_cv(df_subset)
   set.seed(9)
-  splits <- splits |> slice_sample(n = 10)
+  splits <- splits |> slice_sample(n = 10) # only 10 samples
 
   crps_results <- numeric(length(lambda_grid))
 
@@ -153,6 +149,7 @@ fit_cell_model <- function(df_subset) {
         next
       }
 
+      # 1. mean model
       X_train <- as.matrix(train_data[, mean_vars])
       y_train <- train_data$obs
       X_test <- as.matrix(test_data[, mean_vars])
@@ -165,25 +162,28 @@ fit_cell_model <- function(df_subset) {
       mu_train <- softplus(pred_m_train)
       mu_test <- softplus(pred_m_test)
 
-      y_var_train <- (y_train - mu_train)^2
+      # 2. spread model
+      y_var_train <- (y_train - mu_train)^2 # error of mean model
       X_spread_train <- as.matrix(train_data[, spread_vars])
       X_spread_test <- as.matrix(test_data[, spread_vars])
 
+      # error is used as target for spread model
       fit_s <- fit_glmnet_safe(X_spread_train, y_var_train, lam)
 
       pred_s_test <- as.vector(predict(fit_s, newx = X_spread_test, s = lam))
       phi_test <- softplus(pred_s_test)
 
+      # calculate CRPS
       crps_val <- crps_gamma(test_data$obs, mu_test, phi_test)
       crps_lam <- crps_lam + mean(crps_val, na.rm = TRUE)
     }
-    # mean crps across folds (splits)
+    # mean crps across folds
     crps_results[l_idx] <- crps_lam / length(splits$splits)
   }
 
   # identify best lamda value from grid
   min_indices <- which(crps_results == min(crps_results))
-  best_lam <- max(lambda_grid[min_indices])
+  best_lam <- max(lambda_grid[min_indices]) # max in case of ties
 
   # extract data to fit final mean model
   X_all <- as.matrix(df_subset[, mean_vars]) # features
@@ -193,13 +193,16 @@ fit_cell_model <- function(df_subset) {
   fit_m_final <- fit_glmnet_safe(X_all, y_all, best_lam)
 
   # apply softplus to predictions
-  mu_all <- softplus(as.vector(predict(
-    fit_m_final,
-    newx = X_all,
-    s = best_lam
-  )))
+  mu_all <-
+    predict(
+      fit_m_final,
+      newx = X_all,
+      s = best_lam
+    ) |>
+    as.vector() |>
+    softplus()
 
-  # squared residuals = target for spread model
+  # error = target for spread model
   y_var_all <- (y_all - mu_all)^2
 
   # features
@@ -212,21 +215,24 @@ fit_cell_model <- function(df_subset) {
   coef_m <- as.vector(coef(fit_m_final, s = best_lam))
   coef_s <- as.vector(coef(fit_s_final, s = best_lam))
 
+  # final parameters
   list(
-    a = coef_m[1],
-    b = coef_m[2:8],
-    c = coef_s[1],
-    d = coef_s[2:8],
+    a = coef_m[1], # intercept mean model
+    b = coef_m[2:8], # coefficients/weights mean model
+    c = coef_s[1], # intercept spread model
+    d = coef_s[2:8], # coefficients/weights spread model
     lambda = best_lam
   )
 }
 
-message("Fitting models...")
 
-for (init_month in seq(10, 12)) {
+# Fitting stage
+
+for (init_month in seq(12)) {
   #seq(12)) {
   message(str_glue("   init month = {init_month}"))
 
+  # subset data to init month
   nested_df <-
     df_merged |>
     filter(init_month == {{ init_month }}) |>
@@ -236,7 +242,8 @@ for (init_month in seq(10, 12)) {
 
   message(str_glue("   Total models to fit: {nrow(nested_df)}"))
 
-  results <- nested_df |>
+  results <-
+    nested_df |>
     mutate(model_params = future_map(data, fit_cell_model, .progress = TRUE))
 
   results <-
@@ -244,12 +251,19 @@ for (init_month in seq(10, 12)) {
     select(-data) |>
     filter(!map_lgl(model_params, is.null))
 
-  message("   Formatting frozen parameters...")
+  message("   Done!")
+
+  # Format frozen parameters
 
   lons <- sort(unique(results$X))
   lats <- sort(unique(results$Y))
   leads <- sort(unique(results$L))
 
+  # Create empty arrays
+
+  # Helper
+  # (only for intercepts...edit to use for coefficients/weights)
+  # (MOVE OUT OF FOR LOOP)
   create_empty_array <- function(dim_vec) {
     array(
       NA,
@@ -269,23 +283,27 @@ for (init_month in seq(10, 12)) {
   c_array <- create_empty_array(c(length(lons), length(lats), length(leads)))
 
   # lambdas
-  lambda_array <- create_empty_array(c(
-    length(lons),
-    length(lats),
-    length(leads)
-  ))
+  lambda_array <-
+    create_empty_array(
+      c(
+        length(lons),
+        length(lats),
+        length(leads)
+      )
+    )
 
   # mean model weights
-  b_array <- array(
-    NA,
-    dim = c(length(lons), length(lats), length(leads), length(MODELS)),
-    dimnames = list(
-      X = lons,
-      Y = lats,
-      L = leads,
-      model = MODELS
+  b_array <-
+    array(
+      NA,
+      dim = c(length(lons), length(lats), length(leads), length(MODELS)),
+      dimnames = list(
+        X = lons,
+        Y = lats,
+        L = leads,
+        model = MODELS
+      )
     )
-  )
 
   # spread model weights
   d_array <- array(
@@ -298,6 +316,8 @@ for (init_month in seq(10, 12)) {
       model = MODELS
     )
   )
+
+  # Populate empty arrays
 
   for (i in seq_len(nrow(results))) {
     r <- results[i, ]
@@ -313,17 +333,18 @@ for (init_month in seq(10, 12)) {
     d_array[lon_idx, lat_idx, l_idx, ] <- p$d
   }
 
-  frozen_model <- list(
-    a_array = a_array,
-    b_array = b_array,
-    c_array = c_array,
-    d_array = d_array,
-    lambda_array = lambda_array,
-    lons = lons,
-    lats = lats,
-    leads = leads,
-    models = MODELS
-  )
+  frozen_model <-
+    list(
+      a_array = a_array,
+      b_array = b_array,
+      c_array = c_array,
+      d_array = d_array,
+      lambda_array = lambda_array,
+      lons = lons,
+      lats = lats,
+      leads = leads,
+      models = MODELS
+    )
 
   write_rds(
     frozen_model,
@@ -332,6 +353,3 @@ for (init_month in seq(10, 12)) {
     )
   )
 }
-
-
-message("Step 03 complete.")

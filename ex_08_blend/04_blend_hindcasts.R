@@ -1,3 +1,7 @@
+#
+# Script to apply frozen parameters to NMME hindcast (1991-2020) data
+# Generates final, weighted ensembles with all stats
+
 source("ex_08_blend/config.R")
 source("functions/general_tools.R")
 source("ex_08_blend/functions_blend.R")

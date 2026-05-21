@@ -1,16 +1,7 @@
-#' 01_load_and_align.R
-#'
-#' Purpose: Load hindcast (NMME models) and observation (ERA5) data into stars objects,
-#' filter them to the Africa bounding box, load into memory, and align on a common
-#' spatiotemporal grid (1x1 degree models' resolution) using st_warp(method="average").
-#'
-#' Inputs:
-#' - NMME netcdf files in /mnt/pd-blend/nmme/
-#' - ERA5 total-precipitation netcdf files in /mnt/pd-nmme-residuals/
-#'
-#' Outputs:
-#' - ex_08_blend/data/nmme_aligned_{model}.rds
-#' - ex_08_blend/data/era5_aligned.rds
+#
+# Script to load hindcast (NMME models) and observation (ERA5) data into stars objects,
+# filter them to the Africa bounding box, load into memory, and align on a common
+# spatiotemporal grid (1x1 degree models' resolution) using st_warp(method="average").
 
 source("ex_08_blend/config.R")
 
@@ -32,14 +23,10 @@ df_nmme <- tibble(file = nmme_files) |>
   ) |>
   filter(!is.na(model), !is.na(ic_date)) |>
   # filter to hindcast period 1991 to 2025
-  # filter(year(ic_date) >= 1991, year(ic_date) <= 2025)
-  filter(year(ic_date) >= 1991, year(ic_date) <= 2020) # 2021 - 2025 not ready
+  filter(year(ic_date) >= 1991, year(ic_date) <= 2020) # 2021 - 2025 not ready yet
 
-
-# target_grid <- NULL
 
 # Load, crop, and save NMME data
-
 plan(multicore, workers = 10)
 
 for (mod in MODELS) {
@@ -59,6 +46,7 @@ for (mod in MODELS) {
       ) |>
       st_as_stars()
 
+    # Handle geoss2s specific dimension (only 4 members in some years)
     if (mod == "nasa-geoss2s") {
       r <-
         r |>
@@ -79,8 +67,7 @@ for (mod in MODELS) {
 }
 
 
-# Same for ERA5
-
+# Repeat for ERA5
 era5_files <- fs::dir_ls(
   OBS_DIR,
   regexp = "era5_total-precipitation_mon_.*\\.nc$"
@@ -135,10 +122,9 @@ st_dimensions(era5_regridded) <- st_dimensions(
 )
 
 # Convert ERA5 units
-# Since it's m/day, multiply by 1000 to get mm/day
+# m/day -> mm/day
 era5_regridded <- era5_regridded * 1000
 
 write_rds(era5_regridded, str_glue("{OUTPUT_DIR}/era5_aligned.rds"))
 
 plan(sequential)
-message("Step 01 complete!")
